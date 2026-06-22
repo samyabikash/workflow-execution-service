@@ -1,0 +1,10 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: workflow-execution-service
+
+logging:
+  level:
+    com.growthloops.workflow: INFO
