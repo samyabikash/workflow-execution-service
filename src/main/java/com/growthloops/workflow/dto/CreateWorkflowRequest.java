@@ -1,6 +1,7 @@
 package com.growthloops.workflow.dto;
 
 import com.growthloops.workflow.domain.StepDefinition;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 
@@ -11,6 +12,7 @@ public class CreateWorkflowRequest {
     @NotBlank(message = "workflowId is required")
     private String workflowId;
 
+    @Valid
     @NotEmpty(message = "steps must contain at least one step")
     private List<StepDefinition> steps;
 

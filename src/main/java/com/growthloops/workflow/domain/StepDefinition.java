@@ -1,5 +1,7 @@
 package com.growthloops.workflow.domain;
 
+import jakarta.validation.constraints.NotBlank;
+
 import java.util.Collections;
 import java.util.Map;
 
@@ -9,7 +11,9 @@ import java.util.Map;
  */
 public class StepDefinition {
 
+    @NotBlank(message = "step name is required")
     private String name;
+
     private Map<String, Object> input;
 
     public StepDefinition() {
