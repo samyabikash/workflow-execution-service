@@ -10,7 +10,9 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
 import java.util.List;
 
 @RestController
@@ -35,11 +37,17 @@ public class WorkflowController {
         return service.getWorkflow(workflowId);
     }
 
-    // 2. Execute Workflow
+    // 2. Execute Workflow (asynchronous): returns 202 with an execution id to poll.
     @PostMapping("/workflows/{workflowId}/executions")
-    public ResponseEntity<ExecutionHistoryResponse> execute(@PathVariable String workflowId) {
-        Execution execution = service.execute(workflowId);
-        return ResponseEntity.status(HttpStatus.CREATED)
+    public ResponseEntity<ExecutionHistoryResponse> execute(@PathVariable String workflowId,
+                                                            UriComponentsBuilder uriBuilder) {
+        Execution execution = service.startExecution(workflowId);
+        URI stateUri = uriBuilder
+                .path("/api/v1/executions/{executionId}/state")
+                .buildAndExpand(execution.getExecutionId())
+                .toUri();
+        return ResponseEntity.accepted()
+                .location(stateUri)
                 .body(new ExecutionHistoryResponse(execution));
     }
 

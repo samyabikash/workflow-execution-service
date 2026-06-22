@@ -1,7 +1,6 @@
 package com.growthloops.workflow.engine;
 
 import com.growthloops.workflow.domain.*;
-import com.growthloops.workflow.engine.handlers.DefaultStepHandler;
 import com.growthloops.workflow.repository.ExecutionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,7 +20,8 @@ import java.util.stream.Collectors;
  * - Iterate steps in order
  * - Maintain a shared context of accumulated step outputs
  * - Update execution + step-level state as it progresses
- * - Stop and mark FAILED if a step throws
+ * - Stop and mark FAILED if a step throws, marking remaining steps SKIPPED
+ * - Expose the accumulated context as the execution's final context
  */
 @Component
 public class WorkflowEngine {
@@ -29,7 +29,6 @@ public class WorkflowEngine {
     private static final Logger log = LoggerFactory.getLogger(WorkflowEngine.class);
 
     private final Map<String, StepHandler> handlers;
-    private final DefaultStepHandler defaultHandler = new DefaultStepHandler();
     private final ExecutionRepository executionRepository;
 
     public WorkflowEngine(List<StepHandler> handlerBeans, ExecutionRepository executionRepository) {
@@ -39,7 +38,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * Executes the workflow synchronously and returns the final execution state.
+     * Executes the workflow and returns the final execution state.
      * Persisting after each step gives "live" visibility for the state endpoint.
      */
     public Execution run(Workflow workflow, Execution execution) {
@@ -74,7 +73,11 @@ public class WorkflowEngine {
                 stepExec.setError(ex.getMessage());
                 stepExec.setFinishedAt(Instant.now());
 
+                skipRemainingSteps(execution, i + 1);
+
                 execution.setStatus(ExecutionStatus.FAILED);
+                // Preserve the partial context to aid troubleshooting.
+                execution.setFinalContext(new HashMap<>(context));
                 execution.setFinishedAt(Instant.now());
                 executionRepository.save(execution);
                 return execution;
@@ -85,16 +88,28 @@ public class WorkflowEngine {
 
         execution.setStatus(ExecutionStatus.COMPLETED);
         execution.setCurrentStep(steps.size());
+        execution.setFinalContext(new HashMap<>(context));
         execution.setFinishedAt(Instant.now());
         executionRepository.save(execution);
         return execution;
     }
 
+    private void skipRemainingSteps(Execution execution, int fromIndex) {
+        List<StepExecution> stepExecs = execution.getSteps();
+        for (int j = fromIndex; j < stepExecs.size(); j++) {
+            StepExecution remaining = stepExecs.get(j);
+            if (remaining.getStatus() == ExecutionStatus.PENDING) {
+                remaining.setStatus(ExecutionStatus.SKIPPED);
+            }
+        }
+    }
+
     private Map<String, Object> dispatch(StepDefinition def, Map<String, Object> context) {
         StepHandler handler = handlers.get(def.getName());
-        if (handler != null) {
-            return handler.execute(def.getInput(), context);
+        if (handler == null) {
+            throw new IllegalArgumentException(
+                    "Unknown step type: '" + def.getName() + "'");
         }
-        return defaultHandler.execute(def.getName(), def.getInput());
+        return handler.execute(def.getInput(), context);
     }
 }
