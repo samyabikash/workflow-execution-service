@@ -1,6 +1,7 @@
 package com.growthloops.workflow.domain;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -68,5 +69,18 @@ public class StepExecution {
 
     public void setFinishedAt(Instant finishedAt) {
         this.finishedAt = finishedAt;
+    }
+
+    /**
+     * Returns an immutable-friendly copy of this step's state.
+     */
+    public StepExecution snapshot() {
+        StepExecution copy = new StepExecution(this.name);
+        copy.status = this.status;
+        copy.output = this.output == null ? null : new HashMap<>(this.output);
+        copy.error = this.error;
+        copy.startedAt = this.startedAt;
+        copy.finishedAt = this.finishedAt;
+        return copy;
     }
 }

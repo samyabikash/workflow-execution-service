@@ -17,6 +17,15 @@ public class WorkflowRepository {
         return workflow;
     }
 
+    /**
+     * Atomically stores the workflow only if no entry already exists for its id.
+     *
+     * @return the previously stored workflow if one existed, otherwise {@code null}.
+     */
+    public Workflow saveIfAbsent(Workflow workflow) {
+        return store.putIfAbsent(workflow.getWorkflowId(), workflow);
+    }
+
     public Optional<Workflow> findById(String workflowId) {
         return Optional.ofNullable(store.get(workflowId));
     }
