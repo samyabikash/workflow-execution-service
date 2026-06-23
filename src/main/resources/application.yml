@@ -8,3 +8,7 @@ spring:
 logging:
   level:
     com.growthloops.workflow: INFO
+
+workflow:
+  demo:
+    delay-millis: 10000   # 10 seconds — plenty of time to catch RUNNING in Postman

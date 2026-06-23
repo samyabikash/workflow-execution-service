@@ -1,3 +1,4 @@
+// src/main/java/com/growthloops/workflow/service/WorkflowService.java
 package com.growthloops.workflow.service;
 
 import com.growthloops.workflow.domain.Execution;
@@ -8,7 +9,6 @@ import com.growthloops.workflow.dto.CreateWorkflowRequest;
 import com.growthloops.workflow.engine.WorkflowEngine;
 import com.growthloops.workflow.repository.ExecutionRepository;
 import com.growthloops.workflow.repository.WorkflowRepository;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -22,18 +22,20 @@ public class WorkflowService {
     private final WorkflowRepository workflowRepository;
     private final ExecutionRepository executionRepository;
     private final WorkflowEngine engine;
+    private final AsyncExecutionRunner asyncRunner; // ← inject the dedicated runner
 
     public WorkflowService(WorkflowRepository workflowRepository,
                            ExecutionRepository executionRepository,
-                           WorkflowEngine engine) {
+                           WorkflowEngine engine,
+                           AsyncExecutionRunner asyncRunner) {
         this.workflowRepository = workflowRepository;
         this.executionRepository = executionRepository;
         this.engine = engine;
+        this.asyncRunner = asyncRunner;
     }
 
     public Workflow createWorkflow(CreateWorkflowRequest request) {
         Workflow workflow = new Workflow(request.getWorkflowId(), request.getSteps());
-        // Atomic check-and-insert removes the create race condition.
         Workflow existing = workflowRepository.saveIfAbsent(workflow);
         if (existing != null) {
             throw new IllegalArgumentException(
@@ -49,10 +51,9 @@ public class WorkflowService {
     }
 
     /**
-     * Registers a new execution synchronously (so the caller immediately gets an
-     * execution id to poll) and drives the steps asynchronously.
-     *
-     * @return the freshly-created PENDING execution snapshot.
+     * Registers a new PENDING execution, persists it, fires it asynchronously
+     * via the proxy-aware AsyncExecutionRunner, and immediately returns the
+     * PENDING snapshot to the caller (202 Accepted).
      */
     public Execution startExecution(String workflowId) {
         Workflow workflow = getWorkflow(workflowId);
@@ -61,23 +62,16 @@ public class WorkflowService {
         execution.setExecutionId(UUID.randomUUID().toString());
         execution.setWorkflowId(workflowId);
         execution.setSteps(buildStepExecutions(workflow.getSteps()));
-        executionRepository.save(execution);
+        executionRepository.save(execution); // persist PENDING before launching
 
-        runAsync(workflow, execution);
-        return execution.snapshot();
+        // Called on a DIFFERENT bean → Spring proxy intercepts → truly async
+        asyncRunner.run(workflow, execution);
+
+        return execution.snapshot(); // returns PENDING to the HTTP caller
     }
 
     /**
-     * Drives the workflow on a separate thread so the request returns immediately.
-     */
-    @Async
-    public void runAsync(Workflow workflow, Execution execution) {
-        engine.run(workflow, execution);
-    }
-
-    /**
-     * Executes the workflow and blocks until completion. Retained for tests and
-     * callers that want the final result directly.
+     * Synchronous variant — retained for tests and callers that want to block.
      */
     public Execution executeSync(String workflowId) {
         Workflow workflow = getWorkflow(workflowId);
@@ -98,7 +92,6 @@ public class WorkflowService {
     }
 
     public List<Execution> getExecutionsForWorkflow(String workflowId) {
-        // Validate the workflow exists for a clearer 404.
         getWorkflow(workflowId);
         return executionRepository.findByWorkflowId(workflowId);
     }
