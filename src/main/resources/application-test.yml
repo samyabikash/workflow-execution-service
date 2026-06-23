@@ -1,0 +1,3 @@
+workflow:
+  demo:
+    delay-millis: 0   # disable demo override so tests use their own durationMillis values
