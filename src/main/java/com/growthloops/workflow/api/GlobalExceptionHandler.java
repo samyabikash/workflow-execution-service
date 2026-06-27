@@ -1,5 +1,6 @@
 package com.growthloops.workflow.api;
 
+import com.growthloops.workflow.exception.ExecutionNotCancellableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -25,8 +26,8 @@ public class GlobalExceptionHandler {
     }
 
     /** Cancelling a terminal execution — already COMPLETED, FAILED, or CANCELLED. */
-    @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<Map<String, Object>> handleIllegalState(IllegalStateException ex) {
+    @ExceptionHandler(ExecutionNotCancellableException.class)
+    public ResponseEntity<Map<String, Object>> handleNotCancellable(ExecutionNotCancellableException ex) {
         return build(HttpStatus.CONFLICT, ex.getMessage());
     }
 
