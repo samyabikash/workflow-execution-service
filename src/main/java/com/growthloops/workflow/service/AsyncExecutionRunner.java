@@ -2,6 +2,8 @@ package com.growthloops.workflow.service;
 
 import com.growthloops.workflow.domain.Execution;
 import com.growthloops.workflow.domain.Workflow;
+import com.growthloops.workflow.engine.CancellationRegistry;
+import com.growthloops.workflow.engine.CancellationToken;
 import com.growthloops.workflow.engine.WorkflowEngine;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -20,13 +22,17 @@ import org.springframework.stereotype.Component;
 public class AsyncExecutionRunner {
 
     private final WorkflowEngine engine;
+    private final CancellationRegistry cancellationRegistry;
 
-    public AsyncExecutionRunner(WorkflowEngine engine) {
+
+    public AsyncExecutionRunner(WorkflowEngine engine, CancellationRegistry cancellationRegistry) {
         this.engine = engine;
+        this.cancellationRegistry = cancellationRegistry;
     }
 
     @Async
     public void run(Workflow workflow, Execution execution) {
-        engine.run(workflow, execution);
+        CancellationToken token = cancellationRegistry.register(execution.getExecutionId());
+        engine.run(workflow, execution, token);
     }
 }

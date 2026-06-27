@@ -9,12 +9,6 @@ import java.util.Map;
 @Component
 public class DelayStepHandler implements StepHandler {
 
-    /**
-     * When set to a positive value, this overrides whatever durationMillis
-     * the workflow definition supplies. Useful for local demos where you want
-     * to observe the RUNNING state without editing the Postman collection.
-     * Set to 0 in application.yml (or leave absent) to use the workflow-defined value.
-     */
     @Value("${workflow.demo.delay-millis:0}")
     private long demoDelayMillis;
 
@@ -32,6 +26,8 @@ public class DelayStepHandler implements StepHandler {
         try {
             Thread.sleep(durationMillis);
         } catch (InterruptedException e) {
+            // Restore the interrupt flag and throw so WorkflowEngine can
+            // distinguish a cancellation interrupt from a genuine step failure.
             Thread.currentThread().interrupt();
             throw new IllegalStateException("delay: interrupted while waiting", e);
         }

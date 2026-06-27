@@ -1,11 +1,12 @@
-// src/main/java/com/growthloops/workflow/service/WorkflowService.java
 package com.growthloops.workflow.service;
 
 import com.growthloops.workflow.domain.Execution;
+import com.growthloops.workflow.domain.ExecutionStatus;
 import com.growthloops.workflow.domain.StepDefinition;
 import com.growthloops.workflow.domain.StepExecution;
 import com.growthloops.workflow.domain.Workflow;
 import com.growthloops.workflow.dto.CreateWorkflowRequest;
+import com.growthloops.workflow.engine.CancellationRegistry;
 import com.growthloops.workflow.engine.WorkflowEngine;
 import com.growthloops.workflow.repository.ExecutionRepository;
 import com.growthloops.workflow.repository.WorkflowRepository;
@@ -13,25 +14,32 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 public class WorkflowService {
 
+    private static final Set<ExecutionStatus> TERMINAL_STATUSES =
+            Set.of(ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED);
+
     private final WorkflowRepository workflowRepository;
     private final ExecutionRepository executionRepository;
     private final WorkflowEngine engine;
-    private final AsyncExecutionRunner asyncRunner; // ← inject the dedicated runner
+    private final AsyncExecutionRunner asyncRunner;
+    private final CancellationRegistry cancellationRegistry;
 
     public WorkflowService(WorkflowRepository workflowRepository,
                            ExecutionRepository executionRepository,
                            WorkflowEngine engine,
-                           AsyncExecutionRunner asyncRunner) {
+                           AsyncExecutionRunner asyncRunner,
+                           CancellationRegistry cancellationRegistry) {
         this.workflowRepository = workflowRepository;
         this.executionRepository = executionRepository;
         this.engine = engine;
         this.asyncRunner = asyncRunner;
+        this.cancellationRegistry = cancellationRegistry;
     }
 
     public Workflow createWorkflow(CreateWorkflowRequest request) {
@@ -50,11 +58,6 @@ public class WorkflowService {
                         "Workflow not found: " + workflowId));
     }
 
-    /**
-     * Registers a new PENDING execution, persists it, fires it asynchronously
-     * via the proxy-aware AsyncExecutionRunner, and immediately returns the
-     * PENDING snapshot to the caller (202 Accepted).
-     */
     public Execution startExecution(String workflowId) {
         Workflow workflow = getWorkflow(workflowId);
 
@@ -62,17 +65,13 @@ public class WorkflowService {
         execution.setExecutionId(UUID.randomUUID().toString());
         execution.setWorkflowId(workflowId);
         execution.setSteps(buildStepExecutions(workflow.getSteps()));
-        executionRepository.save(execution); // persist PENDING before launching
+        executionRepository.save(execution);
 
-        // Called on a DIFFERENT bean → Spring proxy intercepts → truly async
         asyncRunner.run(workflow, execution);
 
-        return execution.snapshot(); // returns PENDING to the HTTP caller
+        return execution.snapshot();
     }
 
-    /**
-     * Synchronous variant — retained for tests and callers that want to block.
-     */
     public Execution executeSync(String workflowId) {
         Workflow workflow = getWorkflow(workflowId);
 
@@ -82,7 +81,33 @@ public class WorkflowService {
         execution.setSteps(buildStepExecutions(workflow.getSteps()));
         executionRepository.save(execution);
 
-        return engine.run(workflow, execution);
+        return engine.run(workflow, execution, cancellationRegistry.register(execution.getExecutionId()));
+    }
+
+    /**
+     * Signals cancellation for a PENDING or RUNNING execution.
+     * Returns the latest snapshot after signalling — the engine may not have
+     * acted on the signal yet, so status may still show RUNNING briefly.
+     * Throws IllegalStateException (→ 409) if already in a terminal state.
+     */
+    public Execution cancelExecution(String executionId) {
+        Execution execution = getExecution(executionId);
+
+        if (TERMINAL_STATUSES.contains(execution.getStatus())) {
+            throw new IllegalStateException(
+                    "Cannot cancel execution " + executionId
+                            + " — already in terminal state: " + execution.getStatus());
+        }
+
+        boolean signalled = cancellationRegistry.requestCancellation(executionId);
+
+        if (!signalled) {
+            // Token already gone — execution completed between our status check
+            // and the registry lookup. Re-read and return the terminal snapshot.
+            return getExecution(executionId);
+        }
+
+        return getExecution(executionId);
     }
 
     public Execution getExecution(String executionId) {

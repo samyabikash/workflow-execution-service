@@ -25,7 +25,6 @@ public class WorkflowController {
         this.service = service;
     }
 
-    // 1. Create Workflow
     @PostMapping("/workflows")
     public ResponseEntity<Workflow> createWorkflow(@Valid @RequestBody CreateWorkflowRequest request) {
         Workflow created = service.createWorkflow(request);
@@ -37,7 +36,6 @@ public class WorkflowController {
         return service.getWorkflow(workflowId);
     }
 
-    // 2. Execute Workflow (asynchronous): returns 202 with an execution id to poll.
     @PostMapping("/workflows/{workflowId}/executions")
     public ResponseEntity<ExecutionHistoryResponse> execute(@PathVariable String workflowId,
                                                             UriComponentsBuilder uriBuilder) {
@@ -51,23 +49,34 @@ public class WorkflowController {
                 .body(new ExecutionHistoryResponse(execution));
     }
 
-    // 3. Track Execution State (lightweight)
     @GetMapping("/executions/{executionId}/state")
     public ExecutionStateResponse getState(@PathVariable String executionId) {
         return new ExecutionStateResponse(service.getExecution(executionId));
     }
 
-    // 4. Execution History (full, step-level)
     @GetMapping("/executions/{executionId}")
     public ExecutionHistoryResponse getExecution(@PathVariable String executionId) {
         return new ExecutionHistoryResponse(service.getExecution(executionId));
     }
 
-    // All executions for a workflow
     @GetMapping("/workflows/{workflowId}/executions")
     public List<ExecutionHistoryResponse> getExecutionsForWorkflow(@PathVariable String workflowId) {
         return service.getExecutionsForWorkflow(workflowId).stream()
                 .map(ExecutionHistoryResponse::new)
                 .toList();
+    }
+
+    /**
+     * Cancel a running or pending execution.
+     * Returns 200 with the current execution snapshot immediately after signalling.
+     * The engine acts on the signal asynchronously, so status may still show
+     * RUNNING for a brief moment — poll /state to confirm CANCELLED.
+     * Returns 409 if the execution is already in a terminal state.
+     */
+    @DeleteMapping("/executions/{executionId}")
+    public ResponseEntity<ExecutionHistoryResponse> cancelExecution(
+            @PathVariable String executionId) {
+        Execution execution = service.cancelExecution(executionId);
+        return ResponseEntity.ok(new ExecutionHistoryResponse(execution));
     }
 }
