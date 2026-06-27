@@ -7,7 +7,9 @@ import com.growthloops.workflow.domain.StepExecution;
 import com.growthloops.workflow.domain.Workflow;
 import com.growthloops.workflow.dto.CreateWorkflowRequest;
 import com.growthloops.workflow.engine.CancellationRegistry;
+import com.growthloops.workflow.engine.CancellationToken;
 import com.growthloops.workflow.engine.WorkflowEngine;
+import com.growthloops.workflow.exception.ExecutionNotCancellableException;
 import com.growthloops.workflow.repository.ExecutionRepository;
 import com.growthloops.workflow.repository.WorkflowRepository;
 import org.springframework.stereotype.Service;
@@ -67,7 +69,10 @@ public class WorkflowService {
         execution.setSteps(buildStepExecutions(workflow.getSteps()));
         executionRepository.save(execution);
 
-        asyncRunner.run(workflow, execution);
+        // Register the token BEFORE dispatching so a cancel arriving immediately
+        // after this method returns can never be lost to a not-yet-registered token.
+        CancellationToken token = cancellationRegistry.register(execution.getExecutionId());
+        asyncRunner.run(workflow, execution, token);
 
         return execution.snapshot();
     }
@@ -85,28 +90,25 @@ public class WorkflowService {
     }
 
     /**
-     * Signals cancellation for a PENDING or RUNNING execution.
-     * Returns the latest snapshot after signalling — the engine may not have
-     * acted on the signal yet, so status may still show RUNNING briefly.
-     * Throws IllegalStateException (→ 409) if already in a terminal state.
+     * Signals cancellation for a PENDING or RUNNING execution and returns the latest
+     * snapshot. The engine may not have acted on the signal yet, so the status may
+     * still show RUNNING briefly — poll the state endpoint to observe CANCELLED.
+     * <p>
+     * Throws {@link ExecutionNotCancellableException} (→ 409) if the execution is
+     * already in a terminal state. If the token is gone (the execution finished
+     * between the status check and the signal), the latest terminal snapshot is
+     * returned without error.
      */
     public Execution cancelExecution(String executionId) {
         Execution execution = getExecution(executionId);
 
         if (TERMINAL_STATUSES.contains(execution.getStatus())) {
-            throw new IllegalStateException(
+            throw new ExecutionNotCancellableException(
                     "Cannot cancel execution " + executionId
                             + " — already in terminal state: " + execution.getStatus());
         }
 
-        boolean signalled = cancellationRegistry.requestCancellation(executionId);
-
-        if (!signalled) {
-            // Token already gone — execution completed between our status check
-            // and the registry lookup. Re-read and return the terminal snapshot.
-            return getExecution(executionId);
-        }
-
+        cancellationRegistry.requestCancellation(executionId);
         return getExecution(executionId);
     }
 

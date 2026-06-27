@@ -1,6 +1,7 @@
 package com.growthloops.workflow.engine.handlers;
 
 import com.growthloops.workflow.engine.StepHandler;
+import com.growthloops.workflow.engine.StepInterruptedException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -26,10 +27,10 @@ public class DelayStepHandler implements StepHandler {
         try {
             Thread.sleep(durationMillis);
         } catch (InterruptedException e) {
-            // Restore the interrupt flag and throw so WorkflowEngine can
-            // distinguish a cancellation interrupt from a genuine step failure.
+            // Restore the interrupt flag and throw a dedicated exception so the
+            // engine can distinguish a cancellation interrupt from a real failure.
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("delay: interrupted while waiting", e);
+            throw new StepInterruptedException("delay: interrupted while waiting", e);
         }
         return Map.of("delayedMillis", durationMillis);
     }

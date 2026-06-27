@@ -4,6 +4,7 @@ import com.growthloops.workflow.domain.Execution;
 import com.growthloops.workflow.domain.ExecutionStatus;
 import com.growthloops.workflow.domain.StepDefinition;
 import com.growthloops.workflow.dto.CreateWorkflowRequest;
+import com.growthloops.workflow.exception.ExecutionNotCancellableException;
 import com.growthloops.workflow.service.WorkflowService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,8 @@ import org.springframework.test.context.ActiveProfiles;
 import java.util.List;
 import java.util.Map;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -120,6 +123,49 @@ class WorkflowServiceTest {
 
         assertEquals(ExecutionStatus.FAILED, exec.getStatus());
         assertTrue(exec.getSteps().get(0).getError().contains("Unknown step type"));
+    }
+
+    @Test
+    void cancellingRunningExecutionInterruptsDelayBeforeItCompletes() {
+        // A 5s delay that we cancel mid-flight — without thread interruption the
+        // worker would sleep the full 5s before noticing the cancel between steps.
+        String id = createWorkflow(List.of(
+                new StepDefinition("delay", Map.of("durationMillis", 5000))
+        ));
+
+        Execution started = service.startExecution(id);
+        String execId = started.getExecutionId();
+
+        // Wait until the worker is actually inside the delay.
+        await().atMost(2, SECONDS).until(() ->
+                service.getExecution(execId).getStatus() == ExecutionStatus.RUNNING);
+
+        long startNanos = System.nanoTime();
+        service.cancelExecution(execId);
+
+        await().atMost(2, SECONDS).until(() ->
+                service.getExecution(execId).getStatus() == ExecutionStatus.CANCELLED);
+
+        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
+        assertTrue(elapsedMillis < 4000,
+                "cancel should interrupt the 5s delay promptly, but took " + elapsedMillis + "ms");
+
+        Execution cancelled = service.getExecution(execId);
+        assertEquals(ExecutionStatus.CANCELLED, cancelled.getStatus());
+        assertEquals(ExecutionStatus.CANCELLED, cancelled.getSteps().get(0).getStatus());
+    }
+
+    @Test
+    void cancellingTerminalExecutionConflicts() {
+        String id = createWorkflow(List.of(
+                new StepDefinition("execute", null)
+        ));
+
+        Execution exec = service.executeSync(id);
+        assertEquals(ExecutionStatus.COMPLETED, exec.getStatus());
+
+        assertThrows(ExecutionNotCancellableException.class,
+                () -> service.cancelExecution(exec.getExecutionId()));
     }
 
     @Test

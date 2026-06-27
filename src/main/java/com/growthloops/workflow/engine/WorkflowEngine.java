@@ -36,6 +36,9 @@ public class WorkflowEngine {
      * each step. Persists state after every transition for live poll visibility.
      */
     public Execution run(Workflow workflow, Execution execution, CancellationToken token) {
+        // Let a cancel request from another thread interrupt this worker mid-step.
+        token.attachWorker(Thread.currentThread());
+
         execution.setStatus(ExecutionStatus.RUNNING);
         executionRepository.save(execution);
 
@@ -46,7 +49,9 @@ public class WorkflowEngine {
 
             // Check cancellation BEFORE starting the next step
             if (token.isCancellationRequested()) {
-                //log.info("Execution {} cancelled before step {}", execution.getExecutionId(), i);
+                log.info("Execution {} cancelled before step {}", execution.getExecutionId(), i);
+                // Clear any pending interrupt so a pooled thread is left clean.
+                Thread.interrupted();
                 cancelRemainingSteps(execution, i);
                 execution.setStatus(ExecutionStatus.CANCELLED);
                 execution.setFinalContext(new HashMap<>(context));
@@ -74,25 +79,21 @@ public class WorkflowEngine {
                     context.putAll(output);
                 }
 
-            } catch (IllegalStateException ex) {
-                // DelayStepHandler re-throws InterruptedException as IllegalStateException
-                // when the thread is interrupted. Treat this as cancellation.
-                if (token.isCancellationRequested()) {
-                    log.info("Execution {} cancelled during step {}",
-                            execution.getExecutionId(), def.getName());
-                    stepExec.setStatus(ExecutionStatus.CANCELLED);
-                    stepExec.setError("Step cancelled during execution");
-                    stepExec.setFinishedAt(Instant.now());
-                    cancelRemainingSteps(execution, i + 1);
-                    execution.setStatus(ExecutionStatus.CANCELLED);
-                    execution.setFinalContext(new HashMap<>(context));
-                    execution.setFinishedAt(Instant.now());
-                    executionRepository.save(execution);
-                    cancellationRegistry.deregister(execution.getExecutionId());
-                    return execution;
-                }
-                // Not a cancellation — treat as a real failure
-                handleStepFailure(execution, def, stepExec, ex, context, i);
+            } catch (StepInterruptedException ex) {
+                // A step was interrupted — this is how a cancel reaches an in-flight
+                // blocking step (e.g. delay). Clear the interrupt so the worker thread
+                // is left clean for reuse, then record the cancellation.
+                Thread.interrupted();
+                log.info("Execution {} cancelled during step {}",
+                        execution.getExecutionId(), def.getName());
+                stepExec.setStatus(ExecutionStatus.CANCELLED);
+                stepExec.setError("Step cancelled during execution");
+                stepExec.setFinishedAt(Instant.now());
+                cancelRemainingSteps(execution, i + 1);
+                execution.setStatus(ExecutionStatus.CANCELLED);
+                execution.setFinalContext(new HashMap<>(context));
+                execution.setFinishedAt(Instant.now());
+                executionRepository.save(execution);
                 cancellationRegistry.deregister(execution.getExecutionId());
                 return execution;
 

@@ -1,0 +1,6 @@
+# Demo profile: override every delay step with a long, fixed wait so the
+# RUNNING and CANCELLED states are easy to observe by hand (e.g. in Postman).
+# Activate with: --spring.profiles.active=demo
+workflow:
+  demo:
+    delay-millis: 10000   # 10 seconds

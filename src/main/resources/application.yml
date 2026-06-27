@@ -11,4 +11,7 @@ logging:
 
 workflow:
   demo:
-    delay-millis: 10000   # 10 seconds — plenty of time to catch RUNNING in Postman
+    # 0 = honour each delay step's own durationMillis (production behaviour).
+    # Activate the "demo" profile to override every delay with a long, fixed
+    # value so RUNNING/CANCELLED states are easy to observe by hand.
+    delay-millis: 0

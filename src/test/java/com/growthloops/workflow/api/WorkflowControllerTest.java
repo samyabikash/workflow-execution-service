@@ -16,6 +16,7 @@ import java.util.Map;
 import static org.awaitility.Awaitility.await;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.hamcrest.Matchers.is;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -70,6 +71,37 @@ class WorkflowControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.finalContext.valid", is(true)));
+    }
+
+    @Test
+    void cancellingCompletedExecutionReturnsConflict() throws Exception {
+        String workflowId = "cancel-wf-" + System.nanoTime();
+        String body = objectMapper.writeValueAsString(Map.of(
+                "workflowId", workflowId,
+                "steps", new Object[]{Map.of("name", "execute")}
+        ));
+
+        mockMvc.perform(post("/api/v1/workflows")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+
+        MvcResult result = mockMvc.perform(
+                        post("/api/v1/workflows/" + workflowId + "/executions"))
+                .andExpect(status().isAccepted())
+                .andReturn();
+
+        String execId = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("executionId").asText();
+
+        await().atMost(5, SECONDS).until(() -> {
+            MvcResult state = mockMvc.perform(
+                    get("/api/v1/executions/" + execId + "/state")).andReturn();
+            return objectMapper.readTree(state.getResponse().getContentAsString())
+                    .get("status").asText().equals(ExecutionStatus.COMPLETED.name());
+        });
+
+        mockMvc.perform(delete("/api/v1/executions/" + execId))
+                .andExpect(status().isConflict());
     }
 
     @Test
